@@ -1,4 +1,4 @@
-name: Build macOS App
+name: Build macOS App (DMG)
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
 
 jobs:
   build:
-    name: Build UnBlock.app
+    name: Build DMG
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -21,7 +21,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt --only-binary :all: || pip install -r requirements.txt
           pip install pyinstaller
-      - name: Build
+      - name: Build .app
         run: |
           cd Mac
           rm -rf build dist
@@ -31,12 +31,34 @@ jobs:
           cd Mac/dist
           codesign --force --deep --sign - UnBlock.app || true
           chmod +x UnBlock.app/Contents/MacOS/UnBlock || true
-      - name: Zip
+      - name: Verify .app structure
         run: |
           cd Mac/dist
-          ditto -c -k --keepParent UnBlock.app UnBlock-macOS.zip
-      - uses: actions/upload-artifact@v4
+          echo "=== .app contents ==="
+          ls -la UnBlock.app/Contents/
+          echo "=== executable ==="
+          ls -la UnBlock.app/Contents/MacOS/
+          echo "=== Info.plist ==="
+          cat UnBlock.app/Contents/Info.plist
+      - name: Create DMG
+        run: |
+          cd Mac/dist
+          # Создаём временную папку для DMG-содержимого
+          mkdir -p dmg_staging
+          cp -R UnBlock.app dmg_staging/
+          # Создаём symlink на /Applications для drag-and-drop
+          ln -s /Applications dmg_staging/Applications
+          # Создаём DMG с compressией
+          hdiutil create -volname "UnBlock" \
+            -srcfolder dmg_staging \
+            -ov -format UDZO \
+            UnBlock-macOS.dmg
+          # Проверка
+          ls -lh UnBlock-macOS.dmg
+          hdiutil verify UnBlock-macOS.dmg
+      - name: Upload DMG
+        uses: actions/upload-artifact@v4
         with:
-          name: UnBlock-macOS-zip
-          path: Mac/dist/UnBlock-macOS.zip
+          name: UnBlock-macOS-dmg
+          path: Mac/dist/UnBlock-macOS.dmg
           retention-days: 90
