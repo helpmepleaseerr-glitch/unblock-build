@@ -1,142 +1,42 @@
 name: Build macOS App
 
-# Запускается автоматически при пуше в main ИЛИ вручную кнопкой "Run workflow"
 on:
   push:
-    branches: [ main, master ]
-  workflow_dispatch:  # ручной запуск из вкладки Actions
+    branches: [ main ]
+  workflow_dispatch:
 
 jobs:
   build:
-    name: Build UnBlock.app for macOS
-    # ВАЖНО: macos-13 = Intel. Готовый .app будет работать и на Intel Mac,
-    # и на Apple Silicon (M1/M2/M3) через Rosetta 2.
-    # НЕ меняем на macos-latest (это ARM) — иначе на Intel-маках не запустится.
-    runs-on: macos-13
-
+    name: Build UnBlock.app
+    runs-on: macos-latest
     steps:
-      - name: 📥 Checkout code
-        uses: actions/checkout@v4
-
-      - name: 🐍 Setup Python 3.11
+      - uses: actions/checkout@v4
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: 'pip'
-          cache-dependency-path: Mac/requirements.txt
-
-      - name: 📦 Install dependencies
+      - name: Install deps
         run: |
           cd Mac
           python -m pip install --upgrade pip
-          # --only-binary :all — используем готовые wheels, не компилируем из исходников
-          pip install -r requirements.txt --only-binary :all: || \
-            pip install -r requirements.txt
+          pip install -r requirements.txt --only-binary :all: || pip install -r requirements.txt
           pip install pyinstaller
-          # Проверка что PyInstaller установлен
-          pyinstaller --version
-
-      - name: 🔨 Build UnBlock.app
+      - name: Build
         run: |
           cd Mac
-          # Очистка старых артефактов
           rm -rf build dist
-          # Сборка
           pyinstaller --clean build.spec
-          # Проверка что .app действительно создан
-          if [ ! -d "dist/UnBlock.app" ]; then
-            echo "❌ ОШИБКА: dist/UnBlock.app не найден после сборки!"
-            exit 1
-          fi
-          echo "✅ Сборка успешна"
-          ls -la dist/
-
-      - name: 🔏 Ad-hoc code signature
-        # Подписываем приложение "ad-hoc" подписью — это убирает ошибку
-        # "приложение повреждено" при запуске на других Mac
+      - name: Codesign
         run: |
           cd Mac/dist
-          codesign --force --deep --sign - UnBlock.app
-          # Проверка подписи
-          codesign --verify --verbose UnBlock.app || true
-          # Убедимся что главный исполняемый файл имеет права на запуск
+          codesign --force --deep --sign - UnBlock.app || true
           chmod +x UnBlock.app/Contents/MacOS/UnBlock || true
-          echo "✅ Подпись применена"
-
-      - name: 📦 Create distributable zip
-        # Используем ditto вместо zip — сохраняет macOS metadata и resource forks
+      - name: Zip
         run: |
           cd Mac/dist
           ditto -c -k --keepParent UnBlock.app UnBlock-macOS.zip
-          ls -lh UnBlock-macOS.zip
-          # Заодно посчитаем размер .app
-          du -sh UnBlock.app
-
-      - name: 🚀 Upload .app folder
-        uses: actions/upload-artifact@v4
-        with:
-          name: UnBlock-macOS-app
-          path: Mac/dist/UnBlock.app
-          retention-days: 90
-          compression-level: 0  # .app уже содержит сжатые бинарники
-
-      - name: 🚀 Upload .zip archive
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: UnBlock-macOS-zip
           path: Mac/dist/UnBlock-macOS.zip
           retention-days: 90
-          if-no-files-found: error
-
-  # Автоматически создаём GitHub Release с готовым .zip
-  # Это позволяет скачать файл со страницы Releases, а не из Actions
-  release:
-    name: Create GitHub Release
-    needs: build
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write  # нужно для создания релиза
-
-    steps:
-      - name: 📥 Download built .zip
-        uses: actions/download-artifact@v4
-        with:
-          name: UnBlock-macOS-zip
-          path: ./release
-
-      - name: 🏷️ Create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v1.0.1-${{ github.run_number }}
-          name: UnBlock v1.0.1 (build #${{ github.run_number }})
-          body: |
-            # UnBlock v1.0.1 для macOS
-
-            ## 📥 Установка
-
-            1. Скачайте `UnBlock-macOS.zip` ниже
-            2. Распакуйте двойным кликом
-            3. Перенесите `UnBlock.app` в папку «Программы»
-            4. **Первый запуск:** правый клик на `UnBlock.app` → «Открыть» → подтверждаете
-            5. Если пишет «приложение повреждено» — откройте Терминал и выполните:
-               ```
-               xattr -cr /Applications/UnBlock.app
-               ```
-
-            ## 🔧 Настройка Telegram
-
-            1. Откройте Telegram Desktop
-            2. Настройки → Продвинутые → Тип соединения
-            3. Выберите «Использовать прокси»
-            4. Тип: **SOCKS5**
-            5. Хост: `127.0.0.1`
-            6. Порт: `1080`
-            7. Нажмите «Сохранить»
-
-            ---
-            Сборка выполнена автоматически через GitHub Actions.
-            Build commit: ${{ github.sha }}
-          files: ./release/UnBlock-macOS.zip
-          draft: false
-          prerelease: false
